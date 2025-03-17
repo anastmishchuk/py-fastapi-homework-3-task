@@ -26,6 +26,7 @@ from schemas.accounts import (
     UserLoginResponseSchema,
     TokenRefreshRequestSchema,
     TokenRefreshResponseSchema,
+    UserLoginRequestSchema,
 )
 from security.interfaces import JWTAuthManagerInterface
 
@@ -86,6 +87,12 @@ async def activate(
     user_query = select(UserModel).options(joinedload(UserModel.activation_token)).where(UserModel.email == data.email)
     user_result = await db.execute(user_query)
     user = user_result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=400,
+            detail="User not found.",
+        )
 
     if user.is_active:
         raise HTTPException(
@@ -150,10 +157,7 @@ async def reset_password_complete(
         db: AsyncSession = Depends(get_db),
 ):
     try:
-        user_query = select(UserModel).options(
-            joinedload(UserModel.activation_token)
-        ).where(UserModel.email == data.email)
-
+        user_query = select(UserModel).where(UserModel.email == data.email)
         user_result = await db.execute(user_query)
         user = user_result.scalar_one_or_none()
 
@@ -167,9 +171,11 @@ async def reset_password_complete(
         reset_token_result = await db.execute(reset_token_query)
         reset_token = reset_token_result.scalar_one_or_none()
 
-        if reset_token.token != data.token or reset_token.expires_at < datetime.now():
-            await db.delete(reset_token)
-            await db.commit()
+        if not reset_token or reset_token.token != data.token or reset_token.expires_at < datetime.now():
+            if reset_token:
+                await db.delete(reset_token)
+                await db.commit()
+
             raise HTTPException(
                 status_code=400,
                 detail="Invalid email or token."
@@ -195,7 +201,7 @@ async def reset_password_complete(
 
 @router.post("/login/", status_code=status.HTTP_201_CREATED, response_model=UserLoginResponseSchema)
 async def login(
-        data: UserRegistrationRequestSchema, db: AsyncSession = Depends(get_db),
+        data: UserLoginRequestSchema, db: AsyncSession = Depends(get_db),
         jwt_manager: JWTAuthManagerInterface = Depends(get_jwt_auth_manager),
 ):
     try:
